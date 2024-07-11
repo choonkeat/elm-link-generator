@@ -33,6 +33,7 @@ type alias Model =
     , alert : Maybe Alert
     , prefixUrl : Url.Url
     , columns : Array Column
+    , maxRows : Int
     }
 
 
@@ -57,13 +58,18 @@ type Msg
 
 init : Flags -> Url.Url -> Browser.Navigation.Key -> ( Model, Cmd Msg )
 init _ baseUrl navKey =
+    let
+        rows =
+            Array.fromList [ "John Doe", "Mary Jane" ]
+    in
     ( { navKey = navKey
       , alert = Nothing
       , prefixUrl = baseUrl
       , columns =
             Array.fromList
-                [ { name = "Your name", rows = Array.fromList [ "John Doe", "Mary Jane" ] }
+                [ { name = "Your name", rows = rows }
                 ]
+      , maxRows = Array.length rows
       }
     , Cmd.none
     )
@@ -92,22 +98,12 @@ view model =
                             ]
                             []
                         ]
-                    , div [ class "mb-5" ]
-                        [ div [ class "flex" ]
-                            [ div [ class "w-1/2" ]
-                                [ text "Name"
-                                ]
-                            , div [ class "w-1/2" ]
-                                [ text "Lines of values"
-                                ]
-                            ]
-                        ]
                     , div
                         []
                         (Array.indexedMap
                             (\index column ->
-                                div [ class "flex" ]
-                                    [ div [ class "w-1/2" ]
+                                div [ class "mb-8" ]
+                                    [ div []
                                         [ input
                                             [ class "border border-gray-300 p-2 w-full"
                                             , type_ "text"
@@ -116,7 +112,7 @@ view model =
                                             ]
                                             []
                                         ]
-                                    , div [ class "w-1/2" ]
+                                    , div []
                                         [ textarea
                                             [ class "border border-gray-300 p-2 w-full"
                                             , onInput (SetRows index)
@@ -124,6 +120,8 @@ view model =
                                             ]
                                             []
                                         ]
+                                    , span [ class "text-xs" ]
+                                        [ text (String.fromInt (Array.length column.rows) ++ " rows") ]
                                     ]
                             )
                             model.columns
@@ -217,7 +215,12 @@ update msg model =
         AddColumn ->
             ( { model
                 | alert = Nothing
-                , columns = Array.push { name = "Column " ++ String.fromInt (Array.length model.columns), rows = Array.empty } model.columns
+                , columns =
+                    Array.push
+                        { name = "Column " ++ String.fromInt (Array.length model.columns)
+                        , rows = Array.repeat model.maxRows "abc"
+                        }
+                        model.columns
               }
             , Cmd.none
             )
@@ -239,12 +242,17 @@ update msg model =
                     , Cmd.none
                     )
 
-        SetRows index rows ->
+        SetRows index rowsText ->
             case Array.get index model.columns of
                 Just column ->
+                    let
+                        rows =
+                            Array.fromList (String.split "\n" rowsText)
+                    in
                     ( { model
                         | alert = Nothing
-                        , columns = Array.set index { column | rows = Array.fromList (String.split "\n" rows) } model.columns
+                        , maxRows = Basics.max model.maxRows (Array.length rows)
+                        , columns = Array.set index { column | rows = rows } model.columns
                       }
                     , Cmd.none
                     )
