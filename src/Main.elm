@@ -3,8 +3,8 @@ module Main exposing (Flags, Model, Msg(..), init, main, subscriptions, update, 
 import Array exposing (Array)
 import Browser
 import Browser.Navigation
-import Html exposing (Html, div, h3, input, node, pre, span, text, textarea)
-import Html.Attributes exposing (class, href, property, readonly, rel, type_, value)
+import Html exposing (Html, a, div, h3, input, node, span, text, textarea)
+import Html.Attributes exposing (class, href, property, readonly, rel, target, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Encode
 import Url
@@ -156,6 +156,12 @@ view model =
                                 ]
 
                     -- , pre [ class "whitespace-pre-wrap" ] [ text (Debug.toString model) ]
+                    , a
+                        [ class "text-xs gray-500 float-right"
+                        , target "_blank"
+                        , href "https://github.com/choonkeat/elm-link-generator"
+                        ]
+                        [ text "github.com/choonkeat/elm-link-generator" ]
                     ]
                 ]
             ]
