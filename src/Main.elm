@@ -6,6 +6,7 @@ import Browser.Navigation
 import Html exposing (Html, a, div, h3, input, node, span, text, textarea)
 import Html.Attributes exposing (class, href, property, readonly, rel, target, type_, value)
 import Html.Events exposing (onClick, onInput)
+import Html.Keyed
 import Json.Encode
 import Url
 import Url.Builder
@@ -107,6 +108,11 @@ init _ baseUrl navKey =
 
 view : Model -> Browser.Document Msg
 view model =
+    let
+        effectiveColumnsList =
+            Array.toList model.columns
+                |> List.filter (\row -> row.name /= "" || row.rows /= emptyRow)
+    in
     Browser.Document "App"
         [ node "link"
             [ rel "stylesheet"
@@ -128,11 +134,12 @@ view model =
                             ]
                             []
                         ]
-                    , div
+                    , Html.Keyed.node "div"
                         []
                         (Array.indexedMap
                             (\index column ->
-                                div [ class "mb-8" ]
+                                ( String.fromInt index
+                                , div [ class "mb-8" ]
                                     [ div []
                                         [ input
                                             [ class "border border-gray-300 p-2 w-full"
@@ -153,6 +160,7 @@ view model =
                                     , span [ class "text-xs" ]
                                         [ text (String.fromInt (Array.length column.rows) ++ " rows") ]
                                     ]
+                                )
                             )
                             model.columns
                             |> Array.toList
@@ -167,7 +175,7 @@ view model =
                             []
                         ]
                     , h3 [] [ text "Output URLs" ]
-                    , case Array.toList model.columns of
+                    , case effectiveColumnsList of
                         [] ->
                             text ""
 
@@ -231,6 +239,11 @@ newURL modelPrefixURL newColumns =
         |> (\s -> { modelPrefixURL | query = Just (colNamesPrefix ++ s) })
 
 
+emptyRow : Array String
+emptyRow =
+    Array.fromList [ "" ]
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case Debug.log "update" msg of
@@ -284,7 +297,8 @@ update msg model =
                     in
                     ( { model
                         | alert = Nothing
-                        , columns = newColumns
+                        , columns =
+                            newColumns
                       }
                     , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model.prefixUrl newColumns))
                     )
@@ -306,7 +320,8 @@ update msg model =
                     ( { model
                         | alert = Nothing
                         , maxRows = Basics.max model.maxRows (Array.length rows)
-                        , columns = Array.set index { column | rows = rows } model.columns
+                        , columns =
+                            Array.set index { column | rows = rows } model.columns
                       }
                     , Cmd.none
                     )
