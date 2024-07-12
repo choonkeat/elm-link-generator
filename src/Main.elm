@@ -93,7 +93,7 @@ view model =
                         [ input
                             [ class "border border-gray-300 p-2 w-full"
                             , type_ "text"
-                            , onInput SetPrefixUrl
+                            , onInput (String.trim >> SetPrefixUrl)
                             , property "defaultValue" (Json.Encode.string (Url.toString model.prefixUrl))
                             ]
                             []
@@ -306,6 +306,6 @@ rowToQueryParameters params columns index row =
                         |> Maybe.withDefault ""
 
                 newParams =
-                    Array.push (Url.Builder.string column.name value) params
+                    Array.push (Url.Builder.string (String.trim column.name) (String.trim value)) params
             in
             rowToQueryParameters newParams rest index row
