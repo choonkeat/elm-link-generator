@@ -56,19 +56,49 @@ type Msg
     | SetRows Int String
 
 
+colNameSeparator : String
+colNameSeparator =
+    ","
+
+
+colNamesPrefix : String
+colNamesPrefix =
+    "columns="
+
+
+trimPrefix : String -> String -> String
+trimPrefix prefix s =
+    let
+        prefixLength =
+            String.length prefix
+    in
+    if String.left prefixLength s == prefix then
+        String.dropLeft prefixLength s
+
+    else
+        s
+
+
 init : Flags -> Url.Url -> Browser.Navigation.Key -> ( Model, Cmd Msg )
 init _ baseUrl navKey =
     let
+        columnNames =
+            baseUrl.query
+                |> Maybe.map (trimPrefix colNamesPrefix)
+                |> Maybe.withDefault "Your name"
+                |> String.split colNameSeparator
+                |> List.filterMap Url.percentDecode
+
         rows =
             Array.fromList [ "John Doe", "Mary Jane" ]
     in
     ( { navKey = navKey
       , alert = Nothing
-      , prefixUrl = baseUrl
+      , prefixUrl = { baseUrl | query = Nothing }
       , columns =
-            Array.fromList
-                [ { name = "Your name", rows = rows }
-                ]
+            columnNames
+                |> List.map (\name -> { name = name, rows = rows })
+                |> Array.fromList
       , maxRows = Array.length rows
       }
     , Cmd.none
@@ -142,17 +172,22 @@ view model =
                             text ""
 
                         (first :: _) as columns ->
+                            let
+                                outputRows =
+                                    columnsAddQueryStrings model.prefixUrl first (List.filter (\{ rows } -> Array.length rows > 0) columns)
+                                        |> Array.toList
+                                        |> List.map Url.toString
+                            in
                             div [ class "mb-5" ]
                                 [ textarea
                                     [ class "border border-gray-300 p-2 w-full"
-                                    , readonly True
                                     ]
-                                    [ columnsAddQueryStrings model.prefixUrl first (List.filter (\{ rows } -> Array.length rows > 0) columns)
-                                        |> Array.toList
-                                        |> List.map Url.toString
+                                    [ outputRows
                                         |> String.join "\n"
                                         |> text
                                     ]
+                                , span [ class "text-xs" ]
+                                    [ text (String.fromInt (List.length outputRows) ++ " rows") ]
                                 ]
 
                     -- , pre [ class "whitespace-pre-wrap" ] [ text (Debug.toString model) ]
@@ -185,6 +220,15 @@ viewAlert alert =
             [ span [ class "block sm:inline" ] [ text alert.message ]
             ]
         ]
+
+
+newURL : Url.Url -> Array { b | name : String } -> Url.Url
+newURL modelPrefixURL newColumns =
+    newColumns
+        |> Array.map (\col -> Url.percentEncode col.name)
+        |> Array.toList
+        |> String.join colNameSeparator
+        |> (\s -> { modelPrefixURL | query = Just (colNamesPrefix ++ s) })
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -228,17 +272,21 @@ update msg model =
                         }
                         model.columns
               }
-            , Cmd.none
+            , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model.prefixUrl model.columns))
             )
 
         SetName index name ->
             case Array.get index model.columns of
                 Just column ->
+                    let
+                        newColumns =
+                            Array.set index { column | name = name } model.columns
+                    in
                     ( { model
                         | alert = Nothing
-                        , columns = Array.set index { column | name = name } model.columns
+                        , columns = newColumns
                       }
-                    , Cmd.none
+                    , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model.prefixUrl newColumns))
                     )
 
                 Nothing ->
