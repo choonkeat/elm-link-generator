@@ -151,7 +151,7 @@ view model =
                                         ]
                                     , div []
                                         [ textarea
-                                            [ class "border border-gray-300 p-2 w-full"
+                                            [ class "border border-gray-300 p-2 w-full h-32"
                                             , onInput (SetRows index)
                                             , property "defaultValue" (Json.Encode.string (String.join "\n" (Array.toList column.rows)))
                                             ]
@@ -188,7 +188,7 @@ view model =
                             in
                             div [ class "mb-5" ]
                                 [ textarea
-                                    [ class "border border-gray-300 p-2 w-full"
+                                    [ class "border border-gray-300 p-2 w-full h-32"
                                     ]
                                     [ outputRows
                                         |> String.join "\n"
