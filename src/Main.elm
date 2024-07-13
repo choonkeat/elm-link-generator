@@ -366,13 +366,25 @@ subscriptions _ =
 
 columnsAddQueryStrings : Url.Url -> Column -> List Column -> Array Url.Url
 columnsAddQueryStrings prefixUrl firstColumn columns =
+    let
+        mergeQueryFn =
+            -- create a function once, based on prefixUrl.query
+            -- then use it repeatedly below at Array.map
+            case prefixUrl.query of
+                Just oldQuery ->
+                    \queryParams ->
+                        Url.Builder.toQuery (Array.toList queryParams) ++ "&" ++ oldQuery
+
+                Nothing ->
+                    \queryParams ->
+                        Url.Builder.toQuery (Array.toList queryParams)
+    in
     firstColumn.rows
         |> Array.indexedMap (rowToQueryParameters Array.empty columns)
         |> Array.map
             (\params ->
                 { prefixUrl
-                    | query =
-                        Just (String.dropLeft 1 (Url.Builder.toQuery (Array.toList params)))
+                    | query = Just (String.dropLeft 1 (mergeQueryFn params))
                 }
             )
 
