@@ -293,7 +293,7 @@ update msg model =
                 Just column ->
                     let
                         newColumns =
-                            Array.set index { column | name = name } model.columns
+                            Array.set index { column | name = String.trim name } model.columns
                     in
                     ( { model
                         | alert = Nothing
@@ -315,7 +315,10 @@ update msg model =
                 Just column ->
                     let
                         rows =
-                            Array.fromList (String.split "\n" rowsText)
+                            rowsText
+                                |> String.split "\n"
+                                |> List.map String.trim
+                                |> Array.fromList
                     in
                     ( { model
                         | alert = Nothing
@@ -369,6 +372,6 @@ rowToQueryParameters params columns index row =
                         |> Maybe.withDefault ""
 
                 newParams =
-                    Array.push (Url.Builder.string (String.trim column.name) (String.trim value)) params
+                    Array.push (Url.Builder.string column.name value) params
             in
             rowToQueryParameters newParams rest index row
