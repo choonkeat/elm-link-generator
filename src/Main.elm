@@ -1,10 +1,12 @@
 module Main exposing (Flags, Model, Msg(..), init, main, subscriptions, update, view)
 
+import AppUrl
 import Array exposing (Array)
 import Browser
 import Browser.Navigation
+import Dict
 import Html exposing (Html, a, div, h3, input, node, span, text, textarea)
-import Html.Attributes exposing (class, href, property, readonly, rel, target, type_, value)
+import Html.Attributes exposing (class, href, property, rel, target, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Html.Keyed
 import Json.Encode
@@ -12,6 +14,7 @@ import Url
 import Url.Builder
 
 
+main : Program Flags Model Msg
 main =
     Browser.application
         { init = init
@@ -32,6 +35,7 @@ type alias Alert =
 type alias Model =
     { navKey : Browser.Navigation.Key
     , alert : Maybe Alert
+    , currentUrl : Url.Url
     , prefixUrl : Url.Url
     , columns : Array Column
     , maxRows : Int
@@ -62,40 +66,43 @@ colNameSeparator =
     ","
 
 
-colNamesPrefix : String
-colNamesPrefix =
-    "columns="
+colNameParam : String
+colNameParam =
+    "columns"
 
 
-trimPrefix : String -> String -> String
-trimPrefix prefix s =
-    let
-        prefixLength =
-            String.length prefix
-    in
-    if String.left prefixLength s == prefix then
-        String.dropLeft prefixLength s
-
-    else
-        s
+urlParam : String
+urlParam =
+    "url"
 
 
 init : Flags -> Url.Url -> Browser.Navigation.Key -> ( Model, Cmd Msg )
-init _ baseUrl navKey =
+init _ currentUrl navKey =
     let
+        appUrl =
+            AppUrl.fromUrl currentUrl
+
         columnNames =
-            baseUrl.query
-                |> Maybe.map (trimPrefix colNamesPrefix)
+            appUrl.queryParameters
+                |> Dict.get colNameParam
+                |> Maybe.map (String.join colNameSeparator)
                 |> Maybe.withDefault "Your name"
                 |> String.split colNameSeparator
-                |> List.filterMap Url.percentDecode
+
+        prefixUrl =
+            appUrl.queryParameters
+                |> Dict.get urlParam
+                |> Maybe.andThen List.head
+                |> Maybe.andThen Url.fromString
+                |> Maybe.withDefault { currentUrl | query = Nothing, fragment = Nothing }
 
         rows =
             Array.fromList [ "John Doe", "Mary Jane" ]
     in
     ( { navKey = navKey
       , alert = Nothing
-      , prefixUrl = { baseUrl | query = Nothing }
+      , currentUrl = currentUrl
+      , prefixUrl = prefixUrl
       , columns =
             columnNames
                 |> List.map (\name -> { name = name, rows = rows })
@@ -230,13 +237,24 @@ viewAlert alert =
         ]
 
 
-newURL : Url.Url -> Array { b | name : String } -> Url.Url
-newURL modelPrefixURL newColumns =
-    newColumns
-        |> Array.map (\col -> Url.percentEncode col.name)
-        |> Array.toList
-        |> String.join colNameSeparator
-        |> (\s -> { modelPrefixURL | query = Just (colNamesPrefix ++ s) })
+newURL : { a | currentUrl : Url.Url, prefixUrl : Url.Url } -> Array { b | name : String } -> Url.Url
+newURL { currentUrl, prefixUrl } newColumns =
+    let
+        colNames =
+            newColumns
+                |> Array.map .name
+                |> Array.toList
+                |> String.join colNameSeparator
+
+        newQuery =
+            Url.Builder.toQuery
+                [ Url.Builder.string urlParam (Url.toString prefixUrl)
+                , Url.Builder.string colNameParam colNames
+                ]
+    in
+    { currentUrl
+        | query = Just (String.dropLeft 1 newQuery)
+    }
 
 
 emptyRow : Array String
@@ -265,7 +283,7 @@ update msg model =
                         | alert = Nothing
                         , prefixUrl = prefixUrl
                       }
-                    , Cmd.none
+                    , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model model.columns))
                     )
 
                 Nothing ->
@@ -285,7 +303,7 @@ update msg model =
                         }
                         model.columns
               }
-            , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model.prefixUrl model.columns))
+            , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model model.columns))
             )
 
         SetName index name ->
@@ -300,7 +318,7 @@ update msg model =
                         , columns =
                             newColumns
                       }
-                    , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model.prefixUrl newColumns))
+                    , Browser.Navigation.pushUrl model.navKey (Url.toString (newURL model newColumns))
                     )
 
                 Nothing ->
