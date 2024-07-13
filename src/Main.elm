@@ -374,45 +374,39 @@ update msg model =
 
                         csvRowsResult =
                             Csv.Decode.decodeCsv Csv.Decode.NoFieldNames (Csv.Decode.column 0 Csv.Decode.string) rawTextWithoutTrailingWhitespace
-                                |> Result.map (List.map String.trim)
+                                |> Result.map (List.map (String.trim >> String.words >> String.join " "))
+                                |> Result.mapError Csv.Decode.errorToString
+                                |> Result.andThen
+                                    (\csvRows ->
+                                        if csvRows == splitRawText then
+                                            Err "no difference"
+
+                                        else
+                                            Ok csvRows
+                                    )
                     in
                     case csvRowsResult of
                         Ok csvRows ->
-                            if csvRows == splitRawText then
-                                ( { model
-                                    | alert = Nothing
-                                    , maxRows = Basics.max model.maxRows (List.length splitRawText)
-                                    , columns =
-                                        Array.set index
-                                            { column
-                                                | rawText = rawText
-                                                , fixedText = Nothing
-                                                , rows = Array.fromList splitRawText
-                                            }
-                                            model.columns
-                                  }
-                                , Cmd.none
-                                )
-
-                            else
-                                -- not naive CSV encoding!
-                                -- fix rawText
-                                ( { model
-                                    | alert = Nothing
-                                    , maxRows = Basics.max model.maxRows (List.length csvRows)
-                                    , columns =
-                                        Array.set index
-                                            { column
-                                                | rawText = rawText
-                                                , fixedText = Just (String.join "\n" csvRows ++ "\n")
-                                                , rows = Array.fromList csvRows
-                                            }
-                                            model.columns
-                                  }
-                                , Cmd.none
-                                )
+                            -- important bit of this branch is `fixedText = Just ...`
+                            -- so textarea content is replaced with fixed text (each row with newlines trimmed)
+                            ( { model
+                                | alert = Nothing
+                                , maxRows = Basics.max model.maxRows (List.length csvRows)
+                                , columns =
+                                    Array.set index
+                                        { column
+                                            | rawText = rawText
+                                            , fixedText = Just (String.join "\n" csvRows ++ "\n")
+                                            , rows = Array.fromList csvRows
+                                        }
+                                        model.columns
+                              }
+                            , Cmd.none
+                            )
 
                         Err _ ->
+                            -- important bit of this branch is `fixedText = Nothing`
+                            -- so textarea content remains as user typed
                             ( { model
                                 | alert = Nothing
                                 , maxRows = Basics.max model.maxRows (List.length splitRawText)
