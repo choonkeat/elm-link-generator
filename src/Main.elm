@@ -3,8 +3,9 @@ module Main exposing (Flags, Model, Msg(..), init, main, subscriptions, update, 
 import Array exposing (Array)
 import Browser
 import Browser.Navigation
-import Html exposing (Html, a, div, h3, input, node, span, text, textarea)
-import Html.Attributes exposing (class, href, property, readonly, rel, target, type_, value)
+import Csv.Decode
+import Html exposing (Html, a, div, h3, input, node, p, span, text, textarea)
+import Html.Attributes exposing (class, href, property, rel, target, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Html.Keyed
 import Json.Encode
@@ -12,6 +13,7 @@ import Url
 import Url.Builder
 
 
+main : Program Flags Model Msg
 main =
     Browser.application
         { init = init
@@ -40,6 +42,8 @@ type alias Model =
 
 type alias Column =
     { name : String
+    , rawText : String
+    , fixedText : Maybe String
     , rows : Array String
     }
 
@@ -91,16 +95,26 @@ init _ baseUrl navKey =
                 |> List.filterMap Url.percentDecode
 
         rows =
-            Array.fromList [ "John Doe", "Mary Jane" ]
+            [ "John Doe", "Mary Jane" ]
+
+        rawText =
+            String.join "\n" rows
     in
     ( { navKey = navKey
       , alert = Nothing
       , prefixUrl = { baseUrl | query = Nothing }
       , columns =
             columnNames
-                |> List.map (\name -> { name = name, rows = rows })
+                |> List.map
+                    (\name ->
+                        { name = name
+                        , rawText = rawText
+                        , fixedText = Nothing
+                        , rows = Array.fromList rows
+                        }
+                    )
                 |> Array.fromList
-      , maxRows = Array.length rows
+      , maxRows = List.length rows
       }
     , Cmd.none
     )
@@ -153,7 +167,12 @@ view model =
                                         [ textarea
                                             [ class "border border-gray-300 p-2 w-full h-32"
                                             , onInput (SetRows index)
-                                            , property "defaultValue" (Json.Encode.string (String.join "\n" (Array.toList column.rows)))
+                                            , case column.fixedText of
+                                                Just fixedText ->
+                                                    value fixedText
+
+                                                Nothing ->
+                                                    value column.rawText
                                             ]
                                             []
                                         ]
@@ -194,6 +213,36 @@ view model =
                                         |> String.join "\n"
                                         |> text
                                     ]
+                                , span [ class "text-xs" ]
+                                    [ text (String.fromInt (List.length outputRows) ++ " rows") ]
+                                ]
+                    , h3 [] [ text "Output links" ]
+                    , case effectiveColumnsList of
+                        [] ->
+                            text ""
+
+                        (first :: _) as columns ->
+                            let
+                                outputRows =
+                                    columnsAddQueryStrings model.prefixUrl first (List.filter (\{ rows } -> Array.length rows > 0) columns)
+                                        |> Array.toList
+                                        |> List.map Url.toString
+                            in
+                            div [ class "mb-5" ]
+                                [ div []
+                                    (outputRows
+                                        |> List.map
+                                            (\url ->
+                                                p []
+                                                    [ a
+                                                        [ class "underline"
+                                                        , target "_blank"
+                                                        , href url
+                                                        ]
+                                                        [ text url ]
+                                                    ]
+                                            )
+                                    )
                                 , span [ class "text-xs" ]
                                     [ text (String.fromInt (List.length outputRows) ++ " rows") ]
                                 ]
@@ -246,7 +295,7 @@ emptyRow =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    case Debug.log "update" msg of
+    case msg of
         -- [url] decide what to do
         OnUrlRequest (Browser.Internal urlUrl) ->
             ( model, Browser.Navigation.pushUrl model.navKey (Url.toString urlUrl) )
@@ -281,7 +330,9 @@ update msg model =
                 , columns =
                     Array.push
                         { name = "Column " ++ String.fromInt (Array.length model.columns)
-                        , rows = Array.repeat model.maxRows "abc"
+                        , rawText = ""
+                        , fixedText = Nothing
+                        , rows = Array.fromList []
                         }
                         model.columns
               }
@@ -310,21 +361,72 @@ update msg model =
                     , Cmd.none
                     )
 
-        SetRows index rowsText ->
+        SetRows index rawText ->
             case Array.get index model.columns of
                 Just column ->
                     let
-                        rows =
-                            Array.fromList (String.split "\n" rowsText)
+                        rawTextWithoutTrailingWhitespace =
+                            String.trimRight rawText
+
+                        splitRawText =
+                            String.split "\n" rawTextWithoutTrailingWhitespace
+                                |> List.map String.trim
+
+                        csvRowsResult =
+                            Csv.Decode.decodeCsv Csv.Decode.NoFieldNames (Csv.Decode.column 0 Csv.Decode.string) rawTextWithoutTrailingWhitespace
+                                |> Result.map (List.map String.trim)
                     in
-                    ( { model
-                        | alert = Nothing
-                        , maxRows = Basics.max model.maxRows (Array.length rows)
-                        , columns =
-                            Array.set index { column | rows = rows } model.columns
-                      }
-                    , Cmd.none
-                    )
+                    case csvRowsResult of
+                        Ok csvRows ->
+                            if csvRows == splitRawText then
+                                ( { model
+                                    | alert = Nothing
+                                    , maxRows = Basics.max model.maxRows (List.length splitRawText)
+                                    , columns =
+                                        Array.set index
+                                            { column
+                                                | rawText = rawText
+                                                , fixedText = Nothing
+                                                , rows = Array.fromList splitRawText
+                                            }
+                                            model.columns
+                                  }
+                                , Cmd.none
+                                )
+
+                            else
+                                -- not naive CSV encoding!
+                                -- fix rawText
+                                ( { model
+                                    | alert = Nothing
+                                    , maxRows = Basics.max model.maxRows (List.length csvRows)
+                                    , columns =
+                                        Array.set index
+                                            { column
+                                                | rawText = rawText
+                                                , fixedText = Just (String.join "\n" csvRows ++ "\n")
+                                                , rows = Array.fromList csvRows
+                                            }
+                                            model.columns
+                                  }
+                                , Cmd.none
+                                )
+
+                        Err _ ->
+                            ( { model
+                                | alert = Nothing
+                                , maxRows = Basics.max model.maxRows (List.length splitRawText)
+                                , columns =
+                                    Array.set index
+                                        { column
+                                            | rawText = rawText
+                                            , fixedText = Nothing
+                                            , rows = Array.fromList splitRawText
+                                        }
+                                        model.columns
+                              }
+                            , Cmd.none
+                            )
 
                 Nothing ->
                     ( { model
