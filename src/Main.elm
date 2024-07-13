@@ -4,12 +4,14 @@ import AppUrl
 import Array exposing (Array)
 import Browser
 import Browser.Navigation
+import Csv.Decode
 import Dict
-import Html exposing (Html, a, div, h3, input, node, span, text, textarea)
-import Html.Attributes exposing (class, href, property, rel, target, type_, value)
-import Html.Events exposing (onClick, onInput)
+import Html exposing (Html, a, div, h3, hr, input, label, node, p, span, text, textarea)
+import Html.Attributes exposing (checked, class, href, property, rel, target, type_, value)
+import Html.Events exposing (onCheck, onClick, onInput)
 import Html.Keyed
 import Json.Encode
+import Platform.Cmd as Cmd
 import Url
 import Url.Builder
 
@@ -35,6 +37,7 @@ type alias Alert =
 type alias Model =
     { navKey : Browser.Navigation.Key
     , alert : Maybe Alert
+    , sanitizeRows : Bool
     , currentUrl : Url.Url
     , prefixUrl : Url.Url
     , columns : Array Column
@@ -44,6 +47,8 @@ type alias Model =
 
 type alias Column =
     { name : String
+    , rawText : String
+    , fixedText : Maybe String
     , rows : Array String
     }
 
@@ -59,6 +64,7 @@ type Msg
     | AddColumn
     | SetName Int String
     | SetRows Int String
+    | SetSanitizeRows Bool
 
 
 colNameSeparator : String
@@ -74,6 +80,11 @@ colNameParam =
 urlParam : String
 urlParam =
     "url"
+
+
+sanitizeRowsParams : String
+sanitizeRowsParams =
+    "sanitizeRows"
 
 
 init : Flags -> Url.Url -> Browser.Navigation.Key -> ( Model, Cmd Msg )
@@ -96,18 +107,35 @@ init _ currentUrl navKey =
                 |> Maybe.andThen Url.fromString
                 |> Maybe.withDefault { currentUrl | query = Nothing, fragment = Nothing }
 
+        sanitizeRows =
+            appUrl.queryParameters
+                |> Dict.get sanitizeRowsParams
+                |> Maybe.map (\words -> not (List.any (\a -> List.member a [ "0", "false", "f" ]) words))
+                |> Maybe.withDefault True
+
         rows =
-            Array.fromList [ "John Doe", "Mary Jane" ]
+            [ "John Doe", "Mary Jane" ]
+
+        rawText =
+            String.join "\n" rows
     in
     ( { navKey = navKey
       , alert = Nothing
+      , sanitizeRows = sanitizeRows
       , currentUrl = currentUrl
       , prefixUrl = prefixUrl
       , columns =
             columnNames
-                |> List.map (\name -> { name = name, rows = rows })
+                |> List.map
+                    (\name ->
+                        { name = name
+                        , rawText = rawText
+                        , fixedText = Nothing
+                        , rows = Array.fromList rows
+                        }
+                    )
                 |> Array.fromList
-      , maxRows = Array.length rows
+      , maxRows = List.length rows
       }
     , Cmd.none
     )
@@ -132,6 +160,17 @@ view model =
                 [ class "md:w-3/5 my-8 ml-auto mr-auto bg-white min-h-full shadow" ]
                 [ div [ class "md:p-4" ]
                     [ viewMaybe viewAlert model.alert
+                    , div [ class "mb-5" ]
+                        [ label []
+                            [ input
+                                [ type_ "checkbox"
+                                , onCheck SetSanitizeRows
+                                , checked model.sanitizeRows
+                                ]
+                                []
+                            , text " Sanitize copy-paste CSV data"
+                            ]
+                        ]
                     , div [ class "mb-5" ]
                         [ input
                             [ class "border border-gray-300 p-2 w-full"
@@ -160,7 +199,12 @@ view model =
                                         [ textarea
                                             [ class "border border-gray-300 p-2 w-full h-32"
                                             , onInput (SetRows index)
-                                            , property "defaultValue" (Json.Encode.string (String.join "\n" (Array.toList column.rows)))
+                                            , case column.fixedText of
+                                                Just fixedText ->
+                                                    value fixedText
+
+                                                Nothing ->
+                                                    value column.rawText
                                             ]
                                             []
                                         ]
@@ -201,6 +245,36 @@ view model =
                                         |> String.join "\n"
                                         |> text
                                     ]
+                                , span [ class "text-xs" ]
+                                    [ text (String.fromInt (List.length outputRows) ++ " rows") ]
+                                ]
+                    , h3 [] [ text "Output links" ]
+                    , case effectiveColumnsList of
+                        [] ->
+                            text ""
+
+                        (first :: _) as columns ->
+                            let
+                                outputRows =
+                                    columnsAddQueryStrings model.prefixUrl first (List.filter (\{ rows } -> Array.length rows > 0) columns)
+                                        |> Array.toList
+                                        |> List.map Url.toString
+                            in
+                            div [ class "mb-5" ]
+                                [ div []
+                                    (outputRows
+                                        |> List.map
+                                            (\url ->
+                                                p []
+                                                    [ a
+                                                        [ class "underline"
+                                                        , target "_blank"
+                                                        , href url
+                                                        ]
+                                                        [ text url ]
+                                                    ]
+                                            )
+                                    )
                                 , span [ class "text-xs" ]
                                     [ text (String.fromInt (List.length outputRows) ++ " rows") ]
                                 ]
@@ -264,7 +338,7 @@ emptyRow =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    case Debug.log "update" msg of
+    case msg of
         -- [url] decide what to do
         OnUrlRequest (Browser.Internal urlUrl) ->
             ( model, Browser.Navigation.pushUrl model.navKey (Url.toString urlUrl) )
@@ -299,7 +373,9 @@ update msg model =
                 , columns =
                     Array.push
                         { name = "Column " ++ String.fromInt (Array.length model.columns)
-                        , rows = Array.repeat model.maxRows "abc"
+                        , rawText = ""
+                        , fixedText = Nothing
+                        , rows = Array.fromList []
                         }
                         model.columns
               }
@@ -328,24 +404,72 @@ update msg model =
                     , Cmd.none
                     )
 
-        SetRows index rowsText ->
+        SetRows index rawText ->
             case Array.get index model.columns of
                 Just column ->
                     let
-                        rows =
-                            rowsText
-                                |> String.split "\n"
+                        rawTextWithoutTrailingWhitespace =
+                            String.trimRight rawText
+
+                        splitRawText =
+                            String.split "\n" rawTextWithoutTrailingWhitespace
                                 |> List.map String.trim
-                                |> Array.fromList
+
+                        csvRowsResult =
+                            Csv.Decode.decodeCsv Csv.Decode.NoFieldNames (Csv.Decode.column 0 Csv.Decode.string) rawTextWithoutTrailingWhitespace
+                                |> Result.map (List.map (String.trim >> splitByWhitespace >> String.join " "))
                     in
-                    ( { model
-                        | alert = Nothing
-                        , maxRows = Basics.max model.maxRows (Array.length rows)
-                        , columns =
-                            Array.set index { column | rows = rows } model.columns
-                      }
-                    , Cmd.none
-                    )
+                    case csvRowsResult of
+                        Ok csvRows ->
+                            if csvRows == splitRawText || not model.sanitizeRows then
+                                ( { model
+                                    | alert = Nothing
+                                    , maxRows = Basics.max model.maxRows (List.length splitRawText)
+                                    , columns =
+                                        Array.set index
+                                            { column
+                                                | rawText = rawText
+                                                , fixedText = Nothing
+                                                , rows = Array.fromList splitRawText
+                                            }
+                                            model.columns
+                                  }
+                                , Cmd.none
+                                )
+
+                            else
+                                -- not naive CSV encoding!
+                                -- fix rawText
+                                ( { model
+                                    | alert = Nothing
+                                    , maxRows = Basics.max model.maxRows (List.length csvRows)
+                                    , columns =
+                                        Array.set index
+                                            { column
+                                                | rawText = rawText
+                                                , fixedText = Just (String.join "\n" csvRows ++ "\n")
+                                                , rows = Array.fromList csvRows
+                                            }
+                                            model.columns
+                                  }
+                                , Cmd.none
+                                )
+
+                        Err _ ->
+                            ( { model
+                                | alert = Nothing
+                                , maxRows = Basics.max model.maxRows (List.length splitRawText)
+                                , columns =
+                                    Array.set index
+                                        { column
+                                            | rawText = rawText
+                                            , fixedText = Nothing
+                                            , rows = Array.fromList splitRawText
+                                        }
+                                        model.columns
+                              }
+                            , Cmd.none
+                            )
 
                 Nothing ->
                     ( { model
@@ -353,6 +477,13 @@ update msg model =
                       }
                     , Cmd.none
                     )
+
+        SetSanitizeRows bool ->
+            ( { model
+                | sanitizeRows = bool
+              }
+            , Cmd.none
+            )
 
 
 subscriptions : Model -> Sub Msg
@@ -405,3 +536,66 @@ rowToQueryParameters params columns index row =
                     Array.push (Url.Builder.string column.name value) params
             in
             rowToQueryParameters newParams rest index row
+
+
+
+--
+
+
+whitespaceCodePoints : List Int
+whitespaceCodePoints =
+    [ 0x20
+    , 0x09
+    , 0x0A
+    , 0x0D
+    , 0xA0
+    , 0x1680
+    , 0x2000
+    , 0x2001
+    , 0x2002
+    , 0x2003
+    , 0x2004
+    , 0x2005
+    , 0x2006
+    , 0x2007
+    , 0x2008
+    , 0x2009
+    , 0x200A
+    , 0x202F
+    , 0x205F
+    , 0x3000
+    ]
+
+
+isWhitespace : Char -> Bool
+isWhitespace char =
+    List.member (Char.toCode char) whitespaceCodePoints
+
+
+splitByWhitespace : String -> List String
+splitByWhitespace str =
+    let
+        chars =
+            String.toList str
+
+        ( words, currentWord ) =
+            List.foldl
+                (\char ( words1, currentWord1 ) ->
+                    if isWhitespace char then
+                        if String.isEmpty currentWord1 then
+                            ( words1, currentWord1 )
+
+                        else
+                            ( words1 ++ [ currentWord1 ], "" )
+
+                    else
+                        ( words1, currentWord1 ++ String.fromChar char )
+                )
+                ( [], "" )
+                chars
+    in
+    if String.isEmpty currentWord then
+        words
+
+    else
+        words ++ [ currentWord ]
