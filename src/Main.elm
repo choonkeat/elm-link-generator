@@ -12,6 +12,7 @@ import Html.Events exposing (onCheck, onClick, onInput)
 import Html.Keyed
 import Json.Encode
 import Platform.Cmd as Cmd
+import Task
 import Url
 import Url.Builder
 
@@ -65,6 +66,7 @@ type Msg
     | SetName Int String
     | SetRows Int String
     | SetSanitizeRows Bool
+    | ManyMessages (List Msg)
 
 
 colNameSeparator : String
@@ -248,37 +250,36 @@ view model =
                                 , span [ class "text-xs" ]
                                     [ text (String.fromInt (List.length outputRows) ++ " rows") ]
                                 ]
-                    , h3 [] [ text "Output links" ]
-                    , case effectiveColumnsList of
-                        [] ->
-                            text ""
 
-                        (first :: _) as columns ->
-                            let
-                                outputRows =
-                                    columnsAddQueryStrings model.prefixUrl first (List.filter (\{ rows } -> Array.length rows > 0) columns)
-                                        |> Array.toList
-                                        |> List.map Url.toString
-                            in
-                            div [ class "mb-5" ]
-                                [ div []
-                                    (outputRows
-                                        |> List.map
-                                            (\url ->
-                                                p []
-                                                    [ a
-                                                        [ class "underline"
-                                                        , target "_blank"
-                                                        , href url
-                                                        ]
-                                                        [ text url ]
-                                                    ]
-                                            )
-                                    )
-                                , span [ class "text-xs" ]
-                                    [ text (String.fromInt (List.length outputRows) ++ " rows") ]
-                                ]
-
+                    -- , h3 [] [ text "Output links" ]
+                    -- , case effectiveColumnsList of
+                    --     [] ->
+                    --         text ""
+                    --     (first :: _) as columns ->
+                    --         let
+                    --             outputRows =
+                    --                 columnsAddQueryStrings model.prefixUrl first (List.filter (\{ rows } -> Array.length rows > 0) columns)
+                    --                     |> Array.toList
+                    --                     |> List.map Url.toString
+                    --         in
+                    --         div [ class "mb-5" ]
+                    --             [ div []
+                    --                 (outputRows
+                    --                     |> List.map
+                    --                         (\url ->
+                    --                             p []
+                    --                                 [ a
+                    --                                     [ class "underline"
+                    --                                     , target "_blank"
+                    --                                     , href url
+                    --                                     ]
+                    --                                     [ text url ]
+                    --                                 ]
+                    --                         )
+                    --                 )
+                    --             , span [ class "text-xs" ]
+                    --                 [ text (String.fromInt (List.length outputRows) ++ " rows") ]
+                    --             ]
                     -- , pre [ class "whitespace-pre-wrap" ] [ text (Debug.toString model) ]
                     , a
                         [ class "text-xs gray-500 float-right"
@@ -482,8 +483,26 @@ update msg model =
             ( { model
                 | sanitizeRows = bool
               }
-            , Cmd.none
+            , model.columns
+                |> Array.toList
+                |> List.indexedMap (\index column -> SetRows index column.rawText)
+                |> Task.succeed
+                |> Task.perform ManyMessages
             )
+
+        ManyMessages [] ->
+            ( model, Cmd.none )
+
+        ManyMessages (m :: ms) ->
+            update m model
+                |> Tuple.mapSecond
+                    (\cmd ->
+                        Cmd.batch
+                            [ cmd
+                            , Task.succeed ms
+                                |> Task.perform ManyMessages
+                            ]
+                    )
 
 
 subscriptions : Model -> Sub Msg
